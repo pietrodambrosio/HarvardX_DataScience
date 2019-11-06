@@ -1,4 +1,6 @@
-DATA DICTIONARY - dp_italian_airports_oct2019.csv
+#**DATA DICTIONARY - dp_italian_airports_oct2019.csv**
+
+##*fields common to both the raw and the clean version* 
 
 airport  = airport name (in italian)
 year = year of data 
@@ -37,6 +39,7 @@ rating = flightradar24 rating for the airport
 nroutes = total number of routes from and to the airport
 nro = quality index calculated on total number of routes
 
+##*fields fields present only in the clean version* 
 tm_mov_tot_nm = total mounth movements of next month. OUTPUT VARIABLE - VALUE TO PREDICT
 tm_mov_tot_pycm = total mounth movements - previous year - current month
 tm_mov_tot_pynm = total mounth movements - previous year - next month
