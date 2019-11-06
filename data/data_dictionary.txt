@@ -36,3 +36,7 @@ cod4 = airport international 4 digit code
 rating = flightradar24 rating for the airport
 nroutes = total number of routes from and to the airport
 nro = quality index calculated on total number of routes
+
+tm_mov_tot_nm = total mounth movements of next month. OUTPUT VARIABLE - VALUE TO PREDICT
+tm_mov_tot_pycm = total mounth movements - previous year - current month
+tm_mov_tot_pynm = total mounth movements - previous year - next month
