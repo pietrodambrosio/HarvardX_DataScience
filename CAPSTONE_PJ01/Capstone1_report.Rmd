@@ -522,7 +522,7 @@ To proceed with this approach it is necessary to prepare a matrix in which all t
 $$r_{u,i} = r_{u,i}$$
 ```{r mod7, echo=FALSE}
 load("Matrix_fact_predicted.Rdata")
-rmse_7 = RMSE(predicted,test$rating)
+rmse_7 = round(RMSE(predicted,test$rating),4)
 rmse_tab <- rbind(rmse_tab,c(method = "Model 7 - matrix Factorization", RMSE = rmse_7))
 
 # further adjustments
