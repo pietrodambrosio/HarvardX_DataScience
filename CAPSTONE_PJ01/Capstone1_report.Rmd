@@ -1,0 +1,579 @@
+---
+title: | 
+  | HarvardX Data Science Capstone 
+  | MovieLens Project
+author: "Pietro D'Ambrosio"
+date: "October 23, 2019"
+output:
+  pdf_document:
+    df_print: kable
+---
+
+```{r rmsefinal, echo=FALSE}
+load("rmse_final.Rdata")
+rmse_final = round(rmse_final,4)
+```
+
+# 1. Executive Summary
+
+This project has been implemented as part of the "HarvardX Data Science"" program. The objective of the project is the realization of a system of recommendations starting from a series of 10 million reviews already made by users. After a descriptive analysis of the data and the relative pre-processing necessary to prepare the subsequent processing phases, we proceeded to develop and compare various predictive models. The model that gave the best results was the one based on "matrix factorization". This model was then applied to the validation data set and obtain a RMSE value equal to **`r rmse_final`**.
+
+# 2. Introduction
+This section describes the objectives of the project, the input dataset and the key steps that were performed to achieve the results presented in this report.
+
+## 2.1. Goal of the project
+The main objective of the project is to create a system of film recommendations using all the tools learned during the courses and the 10 M version of the MovieLens dataset. The rating forecast will be carried out using automatic learning algorithms using the input data set (edx) and validated using the validation dataset (validation). RMSE was used to assess how close the forecasts were to the actual values of the validation set.
+
+## 2.2. Input data
+The datasets used for this project have been prepared by GroupLens, a research lab in the Department of Computer Science and Engineering at the University of Minnesota Twin Cities specializing in recommender systems, online communities, mobile and ubiquitous technologies, digital libraries, and local geographic information systems. The MovieLens dataset contains 10 million ratings and 100,000 tags applications applied to 10,000 movies by 72,000 users.It was released in January 2009 and is a stable benchmark dataset.
+
+The dataset are publicly downloadable from [here](https://grouplens.org/datasets/movielens/10m/).
+
+## 2.3  Key steps performed
+After a first check of the data, a descriptive analysis was carried out by means of research and specific visualizations of datasets in order to obtain useful insights and define the best processing approach. 
+
+Subsequently we proceeded to the realization of various modeling hypotheses starting from the simplest possible and increasing their level of complexity. For each modeling hypothesis, a verification of the RMSE was performed and all the values were summarized in a table to allow a more immediate comparison of the results.
+
+# 3. Methods and analysis
+This section explains the process and techniques used, such as data cleaning, data exploration and visualization, the various insights gained, and the modeling approach chosen.
+
+## 3.1. Process and techniques 
+The work begins with a quantitative analysis of the acquired data in order to understand the property of the available features and evaluate the need for any pre-processing activity.
+
+Then a data preparation and data cleaning phase is carried out to proceed with the subsequent modeling phases. Finally, the data visualization phase allows the analysis of the single available features and the identification of the most suitable processing strategies to solve the problem.
+
+```{r step1, include=FALSE}
+load("save_edx.Rdata")
+load("save_validation.Rdata")
+
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(tidyr)) install.packages("tidyr", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(ggpubr)) install.packages("ggpubr", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+```
+### 3.1.1. Descriptive analysis  
+The "edx" dataset contains **`r format(nrow(edx),big.mark=",")`** rows and **`r length(colnames(edx))`** variables. The "validation" dataset, instead, contains **`r format(nrow(validation),big.mark=",")`** rows. From now on we will only consider the edx dataset since we will use the validation dataset only for the final verification of the results obtained. The following table shows the first lines of the dataset.
+```{r step2, echo=FALSE}
+kable(edx[1:4,])
+```
+Now let's examine the contents of every single variable in the edx file:
+
+####Field "rating" 
+This field has a value that varies from 0.5 to 5 (in steps of 0.5) has **mean = `r round(mean(edx$rating),2)`** and **sd = `r round(sd(edx$rating),2)`** and its values are distributed as follows:
+
+```{r step3, echo=FALSE,fig.align='center',fig.height = 4}
+options(scipen=999)
+
+mu = mean(edx$rating)
+
+t = table(edx$rating)
+t = as.data.frame(t)
+colnames(t) = c("rating","frequence")
+t$perc = t$frequence / sum(t$frequence) * 100
+#t$frequence = format(t$frequence,big.mark=",")
+t$perc = paste(round(t$perc, 2), "%", sep="")
+#kable(t, align = c("r","r","r"))
+t$dec = as.factor(ifelse (t$rating %in% c(1,2,3,4,5),"With decimal","Without decimal"))
+t$rating = as.numeric(as.character(t$rating))
+t$frequence = as.numeric(as.character(t$frequence))
+ggplot(t, aes(x= rating, y = frequence,fill=dec)) +
+  geom_bar(stat="identity",color="darkblue") +
+  scale_x_continuous(breaks=seq(0, 5, by= 0.5)) +
+  scale_fill_manual(values = c("With decimal"="darkred", "Without decimal"="darkgreen")) +
+  labs(x="Rating", y="Number of ratings") +
+  geom_text(aes(label=perc), vjust=1.2, color="white", size=3)+
+  theme(legend.position="bottom",legend.title=element_blank())+
+  theme_minimal()
+```
+
+
+From the previous information two elements of interest immediately emerge:
+
+1. the ratings are not uniformly distributed and probably a good part of the users tend to evaluate only the films that they liked
+2. ratings with integer values are much more numerous than decimal ratings.
+
+####Fields "userId", "movieId" and "timestamp"
+The fields "userId" and "movieId" allow us to uniquely identify the users and films to which the assessments relate. The field "timestamp" indicates the date and time the evaluation was performed.
+In the "edx" dataset there are **`r format(length(unique(edx$userId)),big.mark = ",")`** unique users and **`r format(length(unique(edx$movieId)),big.mark = ",")`** unique movies. So not all users have evaluated all the movies and not all movies are rated by all users.
+
+####Field "title" 
+Contains the title and year of release of the film. The year is contained in brackets and is found in the final part of the text. It is certainly advisable to extract this information and keep it in a separate column to be able to use it in the elaborations.
+
+####Field "genres" 
+This field contains the list of genres that characterize the film. If you want to consider the "gender" to be able to carry out evaluations on this information, it is necessary to split this field (and generate separate lines for each gender).
+
+This operation could change the average of the classifications since some films have many associated genres and therefore, after the split, their contribution to the model could be altered.
+
+The following graph shows the frequency of the genres of the films evaluated in descending order:
+
+
+```{r step4, echo=FALSE,fig.align='center',fig.height = 4}
+options(scipen=999)
+tg <- edx %>% separate_rows(genres,sep="\\|") %>% 
+              group_by(genres) %>%
+              summarise(frequence = n()) %>%
+              arrange(desc(frequence))
+tg$perc = paste(round(tg$frequence / sum(tg$frequence) * 100,2),"%",sep="")
+tg$frequence = as.numeric(tg$frequence)
+#kable(tab_genres)
+
+tg %>% 
+  ggplot(aes(x=reorder(genres, frequence), y=frequence)) +
+  geom_bar(stat='identity', color="darkred",fill="orange") + coord_flip(y=c(0, 4000000)) +
+  labs(x="", y="Number of ratings") +
+  geom_text(aes(label= perc), hjust=-0.1, size=3) +
+  theme_minimal()
+
+```
+
+### 3.1.2. Further data observations
+So far we have observed the characteristics of the individual variables. Now let's try to see if there are elements that characterize the "rating" field with respect to the other variables, and in particular: users, films and years.
+
+####Rating for Users 
+The following graphs allow us to see how the number of ratings is distributed for each user. In this case we try to understand if there are users who express more opinions than others and what properties they have (with respect to the opinion expressed).
+```{r step6, echo=FALSE, fig.align='center',fig.height = 4}
+options(scipen=999)
+
+tu <- edx %>% group_by(userId) %>%
+              summarise(frequence = n(),m = mean(rating), sd = sd(rating), n=n()) %>% 
+              arrange(desc(n)) %>%
+              mutate(cum = cumsum(n),perc = cum/sum(n)*100,rn = row_number())
+
+p1 = tu %>% filter(frequence < 500) %>% ggplot(aes(frequence)) + 
+  geom_histogram(bins=20, color = "darkblue", fill="#5555FF") +
+  ggtitle("Number of rating by users") +
+  labs(subtitle = "(only users with < 500 ratings)",
+       x="Number of ratings" , 
+       y="Number of users") +
+  theme_minimal()
+
+p2 =  tu %>% ggplot(aes(y=perc, x=rn))+
+  geom_line(stat = "identity",color="blue",size=2)+
+  geom_hline(yintercept = 80, linetype="dashed", color = "red", size=1)+
+  geom_vline(xintercept = 26910,linetype="dashed", color = "red", size=1)+
+  ggtitle("Cumulative sum of rating by users") +
+  labs(subtitle = "(red line intercept the curve at 80%)",
+       x="Number of users" , 
+       y="Percent of ratings") +
+  theme_minimal()
+
+ggarrange(p1, p2,ncol = 2, nrow = 1)
+
+```
+
+```{r step7, include=FALSE}
+  
+tu2 = tu %>% filter(rn <= 26910)
+tu3 = tu %>% filter(rn > 26910)
+
+mu_gen = mean(edx$rating)
+mu_us1  = sum(tu$m * tu$frequence)/sum(tu$frequence)
+mu_us2  = sum(tu2$m * tu2$frequence)/sum(tu2$frequence)
+mu_us3  = sum(tu3$m * tu3$frequence)/sum(tu3$frequence)
+
+tu4 = tu %>% filter(rn <= 15000)
+mu_us4  = sum(tu4$m * tu4$frequence)/sum(tu4$frequence)
+mu_us4
+max(tu4$perc)
+
+p_u80 = nrow(tu2)/nrow(tu)*100
+```
+The previous graphs show that a modest quantity of users (around `r round(p_u80,2)`) covers 80% of the total quantity of the evaluations carried out. Therefore it is possible that the judgment of some users weighs more than that of other users in the evaluation of the movies.
+
+In fact if we observe the average rating obtained on this reduced sample of users we will have a value of **`r round(mu_us2,4)`**, significantly different from that of other users which is **`r round(mu_us3,4)`** (the overall average rating is `r round(mu,4)`). If we consider an even smaller sample of 15,000 users we will see an even lower average rating (`r round(mu_us4,4)`).
+
+We can therefore deduce that there is an element, which we could define "user factor", which in some way conditions the judgment of a particular user and which can influence the value of the assigned rating.
+
+####Rating for Movies 
+We repeat the analysis just made for users even for movies with the same criteria. 
+
+In this case we try to understand if there are movies that tend to have lower or higher scores than the average to see if there is also a "movie factor" to be taken into account in the preparation of the predictive model.
+
+```{r step8, echo=FALSE, fig.align='center',fig.height = 3}
+options(scipen=999)
+
+tu <- edx %>% group_by(movieId) %>%
+              summarise(frequence = n(),m = mean(rating), sd = sd(rating), n=n()) %>% 
+              arrange(desc(n)) %>%
+              mutate(cum = cumsum(n),perc = cum/sum(n)*100,rn = row_number())
+
+val_lim = nrow(tu[tu$perc <= 80,])
+
+p1 = tu %>% filter(frequence < 5000) %>% ggplot(aes(frequence)) + 
+  geom_histogram(bins=20, color = "darkgreen", fill="#FF5555") +
+  ggtitle("Number of rating by movie") +
+  labs(subtitle = "(only movies with < 5000 ratings)",
+       x="Number of ratings" , 
+       y="Number of movie") +
+  theme_minimal()
+
+p2 =  tu %>% ggplot(aes(y=perc, x=rn))+
+  geom_line(stat = "identity",color="darkgreen",size=2)+
+  geom_hline(yintercept = 80, linetype="dashed", color = "red", size=1)+
+  geom_vline(xintercept = val_lim,linetype="dashed", color = "red", size=1)+
+  ggtitle("Cumulative sum of rating by movie") +
+  labs(subtitle = "(red line intercept the curve at 80%)",
+       x="Number of movies" , 
+       y="Percent of ratings") +
+  theme_minimal()
+
+ggarrange(p1, p2,ncol = 2, nrow = 1)
+
+```
+
+```{r step9, include=FALSE}
+  
+tu2 = tu %>% filter(rn <= val_lim)
+tu3 = tu %>% filter(rn > val_lim)
+
+mu_gen = mean(edx$rating)
+mu_us1  = sum(tu$m * tu$frequence)/sum(tu$frequence)
+mu_us2  = sum(tu2$m * tu2$frequence)/sum(tu2$frequence)
+mu_us3  = sum(tu3$m * tu3$frequence)/sum(tu3$frequence)
+mu_us1;mu_us2;mu_us3
+
+tu4 = tu %>% filter(rn <= 1000)
+mu_us4  = sum(tu4$m * tu4$frequence)/sum(tu4$frequence)
+mu_us4
+max(tu4$perc)
+
+p_u80 = nrow(tu2)/nrow(tu)*100
+```
+
+the graphs show that a modest quantity of movie (around `r round(p_u80,2)`) covers 80% of the total quantity of the evaluations carried out. Therefore it is possible that the mean rating of these movies is different from that of the other movies and this is an important fact for the evaluation model.
+
+Particularly we can observe the average rating obtained by this subset of movies have a value of **`r round(mu_us2,4)`**, significantly different from that of remain movies which is **`r round(mu_us3,4)`** (the overall average rating is `r round(mu,4)`). If we consider an even smaller sample of 1,000 movies  we will see an even lower average rating (`r round(mu_us4,4)`).
+
+We can therefore deduce that exists also a "movie factor", which in some way conditions the judgment of user for a particular movie and which can influence the value of the assigned rating.
+
+####Rating for Year 
+Let us now try to understand if there is also a "year" characterization of the average ratings assigned by the users. 
+
+For this analysis we will use the same criteria that we applied for users and movies but other types of graphics more suitable to represent these characteristics. 
+
+```{r step10, echo=FALSE, fig.align='center',fig.height = 3}
+options(scipen=999)
+
+tu <- edx %>% mutate(year = as.numeric(str_sub(title,-5,-2))) %>% 
+              group_by(year) %>%
+              summarise(frequence = n(),m = mean(rating), sd = sd(rating), n=n()) %>% 
+              arrange(desc(n)) %>%
+              mutate(cum = cumsum(n),perc = cum/sum(n)*100,rn = row_number())
+
+val_lim = nrow(tu[tu$perc <= 80,])
+
+p1 = ggplot(tu, aes(x= year, y = frequence)) +
+    geom_bar(stat="identity",color="darkcyan",fill="cyan") +
+    labs(x="year", y="Number of ratings") +
+    theme_minimal()
+
+mu = mean(edx$rating)
+
+p2 = ggplot(tu, aes(x= year, y = m)) +
+    geom_line(stat="identity",color="darkcyan",size=0.5) +
+    labs(x="year", y="Mean of ratings") +
+    geom_hline(yintercept = mu, linetype="dashed", color = "red", size=0.5) +
+    theme_minimal()
+
+
+ggarrange(p1, p2,ncol = 2, nrow = 1)
+
+```
+
+It is clear that there is also a "year effect" since the average rating of all movies of a specific year is in some cases significantly different from the overall average.  We will therefore consider this factor in defining the strategy of approach to modeling.
+
+
+### 3.1.3. Data Pre-processing 
+During the data observation phase, we found that there are no absent data or other inconsistencies that would force us to perform a data cleaning phase. However, we need to perform some pre-processing on the input data in order to better operate during the modeling phase. 
+
+In particular we will extract from the "title" field the year of the film and we will create a new version of the input file with the "genres" field splitted. in this way we can take into account the "genre effect" during the selection phase of the predictive models.
+Obviously these processes will be performed both on the "edx" dataset and on the "validation" dataset.
+
+After pre-processing the dataset edx appears as follows:
+```{r preproc, echo=FALSE}
+edx$year        <- as.numeric(str_sub(edx$title,-5,-2))
+validation$year <- as.numeric(str_sub(validation$title,-5,-2))
+
+kable(edx[1:5,])
+```
+
+
+## 3.2. Modeling approach
+For choicing the best modeling approach we will proceed step by step, first trying out the regression models (starting from the simplest) and then using matrix factorization which seems to be one of the best approaches for recommendation systems.
+
+Furthermore, to reduce the risk of overfitting, we will first refine the model on a "test" dataset (10% of data extracted from the edx dataset) and then, only at the end, once we have chosen the final model, we will check it on the "validation" dataset. This approach guarantees us greater model reliability in the use on real data.
+
+Below we will present the individual models evaluated, starting from the simplest possible (the simple average of the rating) and continuing with the addition of factors relating to users, movies, genres and years. In some cases we used "cross validation" for the optimization of the model, while for the evaluation of the model we used the typical error loss function RMSE (residual mean squared error), as defined by the following formula:
+$$ RMSE = \sqrt{MSE} = \sqrt{\frac{1}{N}\displaystyle\sum_{i=1}^N (\hat{y}_{i}-y_{i})^{2}} $$
+
+### 3.2.1. First basic model 
+This model is as simple as possible and obviously serves as a reference point for the analysis of the performance of the various models we will build and to understand whether we are proceeding in the right way or not.
+
+```{r mod1, echo=FALSE}
+# Define the RMSE (Root Mean Square Error) function
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+
+load("save_train.Rdata")
+load("save_test.Rdata")
+
+
+mu <- mean(train$rating)
+rmse_1   <- round(RMSE(mu,test$rating),4)
+
+# create a rmse tab to collect all results 
+rmse_tab <- tibble(method = "Model 1 - Simple average of rating", RMSE = rmse_1)
+
+```
+
+If our prediction of a rating made by a particular user for a particular movie were based solely on the average of all past forecasts, we would get an RMSE of **`r rmse_1`** (the mean of rating). This for us represents the initial value that we should try to improve by adding complexity to the model. 
+
+The formula that characterizes this model (that assumes the same rating for all movies and users with all the differences explained by random variation **$\epsilon$**)is the following:
+$$ Y_{u,i} = \mu + \epsilon_{u,i} $$
+
+From the evaluation carried out on the test dataset this model presents an RMSE of **`r rmse_1`**.
+
+### 3.2.2. Add movie effect to the model
+Now let's see how we can add some elements to the model to consider "the effect of the film" (the average of the historical evaluations obtained by the film) as emerged from the previous considerations.
+
+In this case we can then add to the previous formula a factor that depends on the previous evaluations obtained by the movie. The new model can be formally described as follows:
+$$ Y_{u,i} = \mu + b_i + \epsilon_{u,i} $$
+In this case the term **$$b_i$$** represents average ranking for the movie "i".
+
+```{r mod2, echo=FALSE}
+#############################################
+# MOD. 2 - ADD MOVIE EFFECT
+# some movies are rated higher than others
+#############################################
+
+movie_avg  <- train %>% group_by(movieId) %>% summarise(b_i = mean(rating - mu))
+
+predicted <- mu + test %>% left_join(movie_avg,by="movieId") %>% pull(b_i)
+rmse_2 <- round(RMSE(predicted, test$rating),4)
+
+rmse_tab <- rbind(rmse_tab,c(method = "Model 2 - Add movie effect", RMSE = rmse_2))
+
+```
+
+Once the factor **$b_i$** has been calculated for each movie, we merge this information in the "train" dataset and then train the model and apply it to the "test" dataset. the RMSE calculated with this model is equal to **`r rmse_2`**.
+
+This RMSE is better than the previous one, as shown in the summary table shown below.
+```{r mod2tab, echo=FALSE}
+kable(rmse_tab)
+```
+
+
+### 3.2.3. Add user effect to the model
+In this step we add new element to the model to consider the so-called "user effect" (the average of the historical evaluations given by the user) as emerged from the previous considerations.
+
+So we can add to the previous formula a factor that depends on all the evaluations given by the specific user. The new model can be formally described as follows:
+$$ Y_{u,i} = \mu + b_i + b_u + \epsilon_{u,i} $$
+The term **$b_u$** represents average ranking for the user "u".
+
+```{r mod3, echo=FALSE}
+############################################################
+# MOD. 3 - ADD USER EFFECT
+# some users tend to give a higher or lower average rating
+############################################################
+
+user_avg  <- train %>% left_join(movie_avg,by="movieId") %>%
+             group_by(userId) %>% summarise(b_u = mean(rating - mu - b_i))
+
+predicted <- test %>% left_join(movie_avg,by="movieId") %>% 
+                      left_join(user_avg,by="userId") %>%
+                      mutate(pred = mu + b_i + b_u) %>%
+                      pull(pred)
+rmse_3 <- round(RMSE(predicted, test$rating),4)
+
+rmse_tab <- rbind(rmse_tab,c(method = "Model 3 - Add user effect", RMSE = rmse_3))
+```
+
+Once the factor **b_u** has been calculated for each user, we merge it in the "train" dataset, train the model and then apply it to the "test" dataset. the RMSE calculated with this new model is equal to **`r rmse_3`**. 
+
+We have achieved a further improvement of the RMSE compared to the previous models, as shown in the following summary table.
+```{r mod3tab, echo=FALSE}
+kable(rmse_tab)
+```
+
+
+### 3.2.4. Add year effect to the model
+Now we add further element to the model to consider the "year effect" (the average of the historical evaluations obtained by all the movie of a specific year) as emerged from the previous considerations.
+
+In this case we can add to the previous formula a factor that depends on the previous evaluations obtained by all the movie of a specific year. The new model can be formally described as follows:
+$$ Y_{u,i} = \mu + b_i + b_u + b_y + \epsilon_{u,i} $$
+The term **$b_y$** represents average ranking for the year "y".
+
+```{r mod4, echo=FALSE}
+############################################
+# MOD. 4 - ADD YEAR EFFECT
+# the rating depends on how old the film is
+############################################
+
+train$year <- as.numeric(str_sub(train$title,-5,-2))
+test$year  <- as.numeric(str_sub(test$title,-5,-2))
+
+year_avg  <- train %>% left_join(movie_avg,by="movieId") %>%
+                       left_join(user_avg,by="userId") %>%
+                       group_by(year) %>% 
+                       summarise(b_y = mean(rating - mu - b_i - b_u))
+
+predicted <- test %>% left_join(movie_avg,by="movieId") %>% 
+                      left_join(user_avg,by="userId") %>%
+                      left_join(year_avg,by="year") %>%
+                      mutate(pred = mu + b_i + b_u + b_y) %>%
+                      pull(pred)
+rmse_4 <- round(RMSE(predicted, test$rating),4)
+
+rmse_tab <- rbind(rmse_tab,c(method = "Model 4 - Add year effect", RMSE = rmse_4))
+```
+
+The factor **$b_y$** has been calculated for each year and merged in the "train" dataset. The model applied to the "test" dataset gave a RMSE equal to **`r rmse_4`**.
+
+The obtained RMSE shows that the model guarantees better performance than the previous ones.
+```{r mod4tab, echo=FALSE}
+kable(rmse_tab)
+```
+
+
+
+### 3.2.5. Add genre effect to the model
+Finally consider the "genre effect" (the average of the historical evaluations obtained by all the movies of a specific genre) as emerged from the previous considerations.
+
+In order to perform this processing we need to split the "genres" field to separate and weigh the various genres associated with the single movie separately.
+
+In this case we add to the formula a factor that depends on the previous evaluations obtained by all the movie of a specific genre. The new model can be formally described as follows:
+$$ Y_{u,i} = \mu + b_i + b_u + b_y + b_g + \epsilon_{u,i} $$
+The term **$b_{g}$** represents average ranking for the genre "g".
+
+```{r mod5, echo=FALSE}
+############################################
+# MOD. 5 - ADD GENRE EFFECT
+# the rating depends on genre of movie
+############################################
+
+# for examine the genres we'll split the generes in multiple rows
+train_split <- train %>%separate_rows(genres, sep = "\\|")
+test_split  <- test  %>%separate_rows(genres, sep = "\\|")
+
+# this processing will slightly change the average due to the duplication of the lines by genre
+genre_avg  <- train_split %>% left_join(movie_avg,by="movieId") %>%
+                        left_join(user_avg,by="userId") %>%
+                        left_join(year_avg, by = 'year') %>%
+                        group_by(genres) %>% 
+                        summarise(b_g = mean(rating - mu - b_i - b_u - b_y))
+
+predicted <- test_split %>% left_join(movie_avg,by="movieId") %>% 
+                      left_join(user_avg,by="userId") %>%
+                      left_join(year_avg,by="year") %>%
+                      left_join(genre_avg, by = 'genres') %>%
+                      mutate(pred = mu + b_i + b_u + b_y + b_g) %>%
+                      pull(pred)
+rmse_5 <- round(RMSE(predicted, test_split$rating),4)
+
+rmse_tab <- rbind(rmse_tab,c(method = "Model 5 - Add genre effect", RMSE = rmse_5))
+```
+
+Once the factor **$b_g$** has been calculated for each genre, we merge it in the "train" dataset, train the model and apply it to the "test" dataset. 
+
+The RMSE calculated with this model is equal to **`r rmse_5`**. Below is the summary table of the results obtained.
+```{r mod5tab, echo=FALSE}
+kable(rmse_tab)
+```
+
+### 3.2.6. Model regularization
+The previous model could be further improved by applying the "regularization" to penalize the contribution to the model of the factors calculated on very small groups (eg Users who have evaluated only one film or films evaluated by a few users). 
+
+This penalty factor, which we will call Lambda, is made in such a way that when the number of observations is high it becomes practically zero, while it is significant if the number of observations is low.
+
+The tuning of the lambda penalty factor was evaluated with values ranging from 0 to 20 (step 1). As shown in the following graph, the best value was found to be **13**.
+
+```{r mod6, echo=FALSE}
+##############################################################
+# MOD. 6 - WITH REGULARIZATION
+# penalize large estimates formed with low number of ratings
+##############################################################
+load("save_lambdas_rmses.Rdata")
+
+qplot(lambdas, rmses) 
+
+lambda <- lambdas[which.min(rmses)]
+rmse_6 = round(min(rmses),4)
+
+rmse_tab <- rbind(rmse_tab,c(method = "Model 6 - Add regularization", RMSE = rmse_6))
+
+```
+
+Applying the regularization to the model the obtained RMSE is equal to **`r rmse_6`**. Below is the summary table of the results obtained.
+```{r mod6tab, echo=FALSE}
+kable(rmse_tab)
+```
+
+### 3.2.7. Matrix factorization
+The last model has not produced substantial improvements to the results obtained from the previous models, so we will examine another approach this time based on matrix factorization. 
+
+This technique allows us to consider a new source of variation in values, namely the fact that some films tend to be judged in a similar way to others (for example sagas, sequels, etc.) and some users tend to express opinions similar to other users.
+
+Furthermore, matrix factorization is widely used in machine learning in recommendation systems because it produces very effective results in this type of problem.
+
+To proceed with this approach it is necessary to prepare a matrix in which all the users are the rows and all the films are the columns and represent in each cell of the matrix the residuals, thus defined:
+$$r_{u,i} = r_{u,i}$$
+```{r mod7, echo=FALSE}
+load("Matrix_fact_predicted.Rdata")
+rmse_7 = RMSE(predicted,test$rating)
+rmse_tab <- rbind(rmse_tab,c(method = "Model 7 - matrix Factorization", RMSE = rmse_7))
+
+# further adjustments
+# the rating systems don't have ratings > 5 and ratings < 0.5
+# then we make these changes
+predicted[predicted > 5] <- 5
+predicted[predicted < 0.5] <- 0.5
+
+# compute the rmse
+rmse_8 = round(RMSE(predicted,test$rating),4)
+rmse_tab <- rbind(rmse_tab,c(method = "Model 8 - matrix Factorization with range control", RMSE = rmse_8))
+
+```
+The size of the matrix, the complexity of the calculations and the need to carry out various parameters have led to very high processing times. Upon completion of the processing, the RMSE value found on the test data set is equal to **`r rmse_7`**. This value is much better than all those obtained with the other models based on regression.
+
+If we consider that the range of the ratings varies between 0.5 and 5 and that among the predicted values there are numerous values that lie outside this range, we can apply a simple heuristic to force the predictions out of range to the limit values 0.5 and 5.
+
+Applying this further adjustment we get a final RMSE equal to **`r rmse_8`**.
+
+
+# 4. Results
+## 4.1. modeling results
+The following table shows the results of all the models, verified on the test dataset.
+
+```{r mod9, echo=FALSE}
+kable(rmse_tab)
+```
+
+The best model is undoubtedly the one based on matrix factorization. We will then use this model, with the same parameters used previously, on the "validation" dataset to determine the final RMSE.
+```{r mod10, echo=FALSE}
+load("Matrix_fact_predicted_valid.Rdata")
+rmse_9 = round(RMSE(predicted,validation$rating),4)
+
+```
+
+
+## 4.2. modeling performance
+The matrix factorization model, verified on the "validation" dataset, recorded a final RMSE of **`r rmse_9`**, a result that can certainly be considered interesting considering the performances obtained with the initial models, the small number of variables used and the computer resources available (a common notebook).
+
+# 5. Conclusion
+## 5.1. brief summary of the report
+The work began with a descriptive analysis of the information contained in the input datasets with the aim of obtaining useful insights to guide the subsequent modeling phases.
+
+The approach chosen for modeling was to extract a subset of tests from the train dataset for not to use the validation dataset for the development of the models and reduce the risk of overfitting. 
+
+As regards predictive models, models based on linear regression (with increasing complexity) were first tested. Then we proceeded to apply the matrix factorization which showed the best results. The model chosen was then applied to the "validation" set, obtaining a final RMSE equal to **`r rmse_9`**.
+
+## 5.2. limitations and future work 
+It would be interesting to improve the model taking into account other information that was not taken into consideration at this stage, such as the time elapsed between the first review of the film and the year of release, or to better analyze the borderline cases in order to identify any additional effects to be taken into consideration. 
+
+One could also consider the possibility of making an ensemble of models to try to compensate for the weaknesses of each and get better results.
+
+
+
